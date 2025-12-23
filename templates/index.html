@@ -5,11 +5,87 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Deepgram Voice Agent</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.4/socket.io.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .controls {
+            margin: 20px 0;
+        }
+        button {
+            padding: 10px 20px;
+            margin-right: 10px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+        #connectBtn {
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+        }
+        #connectBtn:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        #disconnectBtn {
+            background-color: #f44336;
+            color: white;
+            border: none;
+            border-radius: 4px;
+        }
+        #disconnectBtn:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        #messages {
+            border: 1px solid #ccc;
+            padding: 10px;
+            height: 400px;
+            overflow-y: auto;
+            background-color: #f9f9f9;
+            border-radius: 4px;
+        }
+        .message {
+            margin: 5px 0;
+            padding: 5px;
+        }
+        .message.info {
+            color: #2196F3;
+        }
+        .message.success {
+            color: #4CAF50;
+        }
+        .message.error {
+            color: #f44336;
+        }
+        .message.agent {
+            color: #9C27B0;
+            font-weight: bold;
+        }
+        .message.user {
+            color: #FF9800;
+        }
+        .timestamp {
+            color: #666;
+            font-size: 0.9em;
+        }
+    </style>
 </head>
 <body>
-    <h1>Deepgram Voice Agent Browser Demo</h1>
-    <p>This is a demo of the Deepgram Voice Agent. It uses the <a href="https://developers.deepgram.com/reference/voice-agent-api/agent">Deepgram Voice Agent API</a>.</p>
-    <p>Please enable your microphone in the browser to start the conversation.</p>
+    <h1>Deepgram Voice Agent</h1>
+    
+    <div class="controls">
+        <button id="connectBtn" onclick="connectToAgent()">Pripojiť sa / Connect</button>
+        <button id="disconnectBtn" onclick="disconnectFromAgent()" disabled>Ukončiť / Disconnect</button>
+    </div>
+    
+    <h2>Správy / Messages:</h2>
+    <div id="messages"></div>
+    
     <script>
         let socket;
         let mediaStream;
@@ -20,14 +96,30 @@
         let isPlaying = false; // Flag to track if we're currently playing audio
         let selectedDeviceId;
 
-        async function init() {
+        function addMessage(message, type = 'info') {
+            const messagesDiv = document.getElementById('messages');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${type}`;
+            
+            const timestamp = new Date().toLocaleTimeString();
+            messageDiv.innerHTML = `<span class="timestamp">[${timestamp}]</span> ${message}`;
+            
+            messagesDiv.appendChild(messageDiv);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+
+        async function connectToAgent() {
             try {
+                addMessage('Pripájanie sa / Connecting...', 'info');
+                document.getElementById('connectBtn').disabled = true;
+                
                 // Create audio context early
                 audioContext = new AudioContext({
                     sampleRate: 16000 // Match the Deepgram sample rate
                 });
 
                 // Get microphone permission with specific constraints
+                addMessage('Žiadosť o prístup k mikrofónu / Requesting microphone access...', 'info');
                 const constraints = {
                     audio: {
                         deviceId: selectedDeviceId ? { exact: selectedDeviceId } : undefined,
@@ -45,8 +137,10 @@
                     }
                 };
                 mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+                addMessage('Mikrofón aktivovaný / Microphone activated', 'success');
 
                 // Connect to Socket.IO server
+                addMessage('Pripájanie sa na server / Connecting to server...', 'info');
                 socket = io('http://localhost:3000', {
                     path: '/socket.io'
                 });
@@ -54,17 +148,39 @@
                 socket.on('connect', () => {
                     console.log('Connected to server');
                     isConnected = true;
+                    addMessage('Pripojené na server / Connected to server', 'success');
                     startStreaming();
+                    document.getElementById('disconnectBtn').disabled = false;
                 });
 
                 socket.on('disconnect', () => {
                     console.log('Disconnected from server');
                     isConnected = false;
+                    addMessage('Odpojené od servera / Disconnected from server', 'info');
                     stopStreaming();
+                    document.getElementById('connectBtn').disabled = false;
+                    document.getElementById('disconnectBtn').disabled = true;
                 });
 
                 socket.on('error', (data) => {
                     console.error('Server error details:', JSON.stringify(data, null, 2));
+                    addMessage(`Chyba / Error: ${JSON.stringify(data)}`, 'error');
+                });
+
+                socket.on('welcome', (data) => {
+                    addMessage('Agent je pripravený / Agent is ready', 'success');
+                });
+
+                socket.on('conversation', (data) => {
+                    if (data.data && data.data.role && data.data.content) {
+                        const role = data.data.role === 'assistant' ? 'Agent' : 'User';
+                        const cssClass = data.data.role === 'assistant' ? 'agent' : 'user';
+                        addMessage(`${role}: ${data.data.content}`, cssClass);
+                    }
+                });
+
+                socket.on('thinking', (data) => {
+                    addMessage('Agent premýšľa / Agent is thinking...', 'info');
                 });
 
                 socket.on('agent_speaking', (data) => {
@@ -83,7 +199,21 @@
 
             } catch (error) {
                 console.error('Error initializing:', error);
+                addMessage(`Chyba pri inicializácii / Initialization error: ${error.message}`, 'error');
+                document.getElementById('connectBtn').disabled = false;
             }
+        }
+
+        function disconnectFromAgent() {
+            addMessage('Ukončujem spojenie / Disconnecting...', 'info');
+            stopStreaming();
+            if (socket) {
+                socket.close();
+                socket = null;
+            }
+            document.getElementById('connectBtn').disabled = false;
+            document.getElementById('disconnectBtn').disabled = true;
+            addMessage('Spojenie ukončené / Connection closed', 'success');
         }
 
         async function setupAudioProcessing() {
@@ -238,12 +368,8 @@
             return devices.filter(device => device.kind === 'audioinput');
         }
 
-        // Initialize when the page loads
-        window.onload = init;
-
         // Clean up when the page is closed
         window.onbeforeunload = () => {
-            stopStreaming();
             if (socket) {
                 socket.close();
             }

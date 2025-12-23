@@ -132,14 +132,24 @@ def handle_connect():
     print("Deepgram connection started successfully")
 
 @socketio.on('audio_data')
-def handle_audio_data(data):
+def handle_audio_data(arg1, arg2=None):
     try:
+        # Support both call styles: (data) or (sid, data).
+        if arg2 is None:
+            data = arg1
+        else:
+            data = arg2
+
+        if data is None:
+            print("No audio data received")
+            return
+
         if dg_connection:
-            print("Received audio data:", len(data), "bytes")
             # Convert to bytes if needed
             if isinstance(data, list):
                 data = bytes(data)
-            dg_connection.send_audio(data)
+            print("Received audio data:", len(data), "bytes")
+            dg_connection.send(data)
         else:
             print("No Deepgram connection available")
             socketio.emit('error', {'data': {'message': 'No Deepgram connection available'}})
