@@ -12,6 +12,11 @@ from deepgram import (
 )
 import os
 import json
+import atexit
+from dotenv import load_dotenv
+
+# Load environment variables from a .env file (if present).
+load_dotenv()
 
 app = Flask(__name__)
 socketio = SocketIO(app, cors_allowed_origins="*", path='/socket.io')
@@ -25,7 +30,11 @@ config = DeepgramClientOptions(
     }
 )
 
-deepgram = DeepgramClient(os.getenv("DEEPGRAM_API_KEY", ""), config)
+DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY")
+if not DEEPGRAM_API_KEY:
+    print("Warning: DEEPGRAM_API_KEY is not set. Create a .env file or export the variable.")
+
+deepgram = DeepgramClient(DEEPGRAM_API_KEY or "", config)
 dg_connection = deepgram.agent.websocket.v("1")
 
 @app.route('/')
@@ -34,6 +43,8 @@ def index():
 
 @socketio.on('connect')
 def handle_connect():
+    # Notify client immediately that connection process has started
+    socketio.emit('open', {'data': {'status': 'connecting'}})
     options = SettingsOptions()
 
     # Configure audio input settings
@@ -160,6 +171,18 @@ def handle_audio_data(arg1, arg2=None):
 @socketio.on('disconnect')
 def handle_disconnect():
     dg_connection.finish()
+
+
+# Ensure Deepgram connection is finished on interpreter exit to stop background
+# threads from logging after stdout/stderr are closed (prevents ValueError).
+def _shutdown_deepgram():
+    try:
+        if 'dg_connection' in globals() and dg_connection:
+            dg_connection.finish()
+    except Exception:
+        pass
+
+atexit.register(_shutdown_deepgram)
 
 if __name__ == '__main__':
     socketio.run(app, debug=True, port=3000, host='0.0.0.0')
